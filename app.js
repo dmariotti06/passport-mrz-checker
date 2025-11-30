@@ -26,6 +26,11 @@ const checkUpdatesBtn = document.getElementById("check-updates-btn");
 const updateStatusEl = document.getElementById("update-status");
 const versionInfoEl = document.getElementById("version-info");
 
+// Nouveaux éléments pour la caméra
+const openCameraBtn = document.getElementById("open-camera-btn");
+const captureBtn = document.getElementById("capture-btn");
+const cameraVideo = document.getElementById("camera-video");
+
 const previewCanvas = document.getElementById("preview-canvas");
 const ctx = previewCanvas.getContext("2d");
 
@@ -35,28 +40,28 @@ let currentMRZLines = null;
 let currentDocumentData = null;
 let currentVisaRules = null;
 let currentVisaRulesVersion = null;
+let cameraStream = null;
 
-// --- Version app (à adapter manuellement) ---
-const APP_VERSION = "1.0.0";
-
-// Affichage version app
+// --- Version app (à adapter) ---
+const APP_VERSION = "1.1.0";
 versionInfoEl.textContent = `Version appli : ${APP_VERSION}`;
 
-// --- Gestion image ---
+// --- Gestion image via fichier ---
 fileInput.addEventListener("change", (e) => {
   const file = e.target.files[0];
   resetAfterImage();
+  stopCamera(); // si la caméra était active
+
   if (!file) return;
 
   if (!file.type.startsWith("image/")) {
     setStatus(imageStatus, "Veuillez sélectionner une image valide.", "error");
-    scanBtn.disabled = true;
+    scanBtn.disabled = false;
     return;
   }
 
   const img = new Image();
   img.onload = () => {
-    // Dessin dans le canvas (simple redimensionnement)
     const maxW = 800;
     const scale = Math.min(maxW / img.width, 1);
     previewCanvas.width = img.width * scale;
@@ -84,6 +89,103 @@ fileInput.addEventListener("change", (e) => {
   img.src = URL.createObjectURL(file);
 });
 
+// --- Gestion caméra : ouverture ---
+openCameraBtn.addEventListener("click", async () => {
+  resetAfterImage();
+  fileInput.value = ""; // on ignore l'upload si la caméra est utilisée
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    setStatus(
+      imageStatus,
+      "Accès à la caméra non supporté par ce navigateur.",
+      "error"
+    );
+    return;
+  }
+
+  try {
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "environment" },
+      audio: false
+    });
+
+    cameraVideo.srcObject = cameraStream;
+    cameraVideo.style.display = "block";
+
+    setStatus(
+      imageStatus,
+      "Caméra active. Cadrez le document et cliquez sur 'Prendre la photo'.",
+      "ok"
+    );
+    captureBtn.disabled = false;
+    scanBtn.disabled = true;
+  } catch (err) {
+    console.error(err);
+    setStatus(
+      imageStatus,
+      "Impossible d'accéder à la caméra (permission refusée ou indisponible).",
+      "error"
+    );
+  }
+});
+
+// --- Gestion caméra : capture d'une image ---
+captureBtn.addEventListener("click", () => {
+  if (!cameraStream) {
+    setStatus(imageStatus, "La caméra n'est pas active.", "error");
+    return;
+  }
+
+  const videoWidth = cameraVideo.videoWidth;
+  const videoHeight = cameraVideo.videoHeight;
+
+  if (!videoWidth || !videoHeight) {
+    setStatus(
+      imageStatus,
+      "Flux vidéo non prêt. Attendez une seconde et réessayez.",
+      "warn"
+    );
+    return;
+  }
+
+  const maxW = 800;
+  const scale = Math.min(maxW / videoWidth, 1);
+  previewCanvas.width = videoWidth * scale;
+  previewCanvas.height = videoHeight * scale;
+
+  ctx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+  ctx.drawImage(
+    cameraVideo,
+    0,
+    0,
+    videoWidth,
+    videoHeight,
+    0,
+    0,
+    previewCanvas.width,
+    previewCanvas.height
+  );
+
+  currentImage = true; // flag indiquant qu'une image est disponible dans le canvas
+  setStatus(
+    imageStatus,
+    "Photo capturée depuis la caméra. Prêt à scanner la MRZ.",
+    "ok"
+  );
+  scanBtn.disabled = false;
+});
+
+// --- Fonction utilitaire : arrêter la caméra ---
+function stopCamera() {
+  if (cameraStream) {
+    cameraStream.getTracks().forEach((track) => track.stop());
+    cameraStream = null;
+  }
+  cameraVideo.srcObject = null;
+  cameraVideo.style.display = "none";
+  captureBtn.disabled = true;
+}
+
 // --- Scan MRZ via Tesseract.js ---
 scanBtn.addEventListener("click", async () => {
   if (!currentImage) return;
@@ -97,8 +199,7 @@ scanBtn.addEventListener("click", async () => {
 
   try {
     const { data } = await Tesseract.recognize(previewCanvas, "eng", {
-      tessedit_char_whitelist:
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<",
+      tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<"
     });
 
     const lines = data.text
@@ -106,7 +207,6 @@ scanBtn.addEventListener("click", async () => {
       .map((l) => l.trim())
       .filter((l) => l.length > 0);
 
-    // Heuristique pour trouver les 2 dernières lignes MRZ (passeport TD3)
     const mrzCandidates = lines.filter(
       (l) => l.includes("<") && l.length >= 40
     );
@@ -120,7 +220,7 @@ scanBtn.addEventListener("click", async () => {
       return;
     }
 
-    const mrzLines = mrzCandidates.slice(-2); // on prend les 2 dernières
+    const mrzLines = mrzCandidates.slice(-2);
     currentMRZLines = mrzLines;
     mrzRawEl.textContent = mrzLines.join("\n");
 
@@ -152,20 +252,17 @@ scanBtn.addEventListener("click", async () => {
 
 // --- Parsing MRZ TD3 (simplifié) ---
 function parseMRZPassportTD3(lines) {
-  // Format TD3 : 2 lignes de 44 caractères
   const [l1Raw, l2Raw] = lines.map((l) => l.padEnd(44, "<").slice(0, 44));
   const l1 = l1Raw;
   const l2 = l2Raw;
 
-  // Ligne 1
-  const documentType = l1.slice(0, 1); // P
-  const issuingState = l1.slice(2, 5); // ex FRA
-  const nameField = l1.slice(5).replace(/<+$/g, ""); // jusqu'à la fin
+  const documentType = l1.slice(0, 1);
+  const issuingState = l1.slice(2, 5);
+  const nameField = l1.slice(5).replace(/<+$/g, "");
   const nameParts = nameField.split("<<");
   const primaryIdentifier = nameParts[0] || "";
   const secondaryIdentifier = nameParts[1] || "";
 
-  // Ligne 2
   const passportNumber = l2.slice(0, 9).replace(/</g, "");
   const passportNumberCheckDigit = l2.slice(9, 10);
   const nationality = l2.slice(10, 13);
@@ -175,7 +272,6 @@ function parseMRZPassportTD3(lines) {
   const expiryDate = l2.slice(21, 27);
   const expiryDateCheckDigit = l2.slice(27, 28);
 
-  // Vérification check digits de base (sans gérer les champs composés ici)
   const passportNumberValid = checkMRZDigit(l2.slice(0, 9), passportNumberCheckDigit);
   const birthDateValid = checkMRZDigit(l2.slice(13, 19), birthDateCheckDigit);
   const expiryDateValid = checkMRZDigit(l2.slice(21, 27), expiryDateCheckDigit);
@@ -186,7 +282,7 @@ function parseMRZPassportTD3(lines) {
     issuingState,
     name: {
       primary: primaryIdentifier.replace(/</g, " "),
-      secondary: secondaryIdentifier.replace(/</g, " "),
+      secondary: secondaryIdentifier.replace(/</g, " ")
     },
     passportNumber,
     passportNumberValid,
@@ -195,7 +291,7 @@ function parseMRZPassportTD3(lines) {
     birthDateValid,
     sex,
     expiryDate,
-    expiryDateValid,
+    expiryDateValid
   };
 }
 
@@ -243,7 +339,7 @@ function displayDocumentData(doc) {
   docDataEl.innerHTML = html;
 }
 
-// Conversion YYMMDD -> texte simple (sans gestion siècle avancée)
+// Conversion YYMMDD -> texte simple
 function formatMRZDate(mrzDate) {
   if (!/^\d{6}$/.test(mrzDate)) return mrzDate;
   const yy = mrzDate.slice(0, 2);
@@ -263,13 +359,13 @@ function setStatus(el, message, level) {
 async function loadVisaRules() {
   try {
     const versionResp = await fetch("./rules/visa_rules_version.json", {
-      cache: "no-cache",
+      cache: "no-cache"
     });
     const versionData = await versionResp.json();
     currentVisaRulesVersion = versionData.visa_rules_version || "inconnue";
 
     const rulesResp = await fetch("./rules/visa_rules.json", {
-      cache: "no-cache",
+      cache: "no-cache"
     });
     const rulesData = await rulesResp.json();
     currentVisaRules = rulesData;
@@ -312,14 +408,15 @@ assessVisaBtn.addEventListener("click", () => {
   }
 
   let resultText = "";
+  let level = "warn";
+
   if (stayType === "short") {
     resultText = rulesEntry.short_stay.text;
+    level = rulesEntry.short_stay.level;
   } else if (stayType === "long") {
     resultText = rulesEntry.long_stay.text;
+    level = rulesEntry.long_stay.level;
   }
-
-  const level = rulesEntry[stayType === "short" ? "short_stay" : "long_stay"]
-    .level;
 
   setStatus(visaResultEl, resultText, level === "ok" ? "ok" : "warn");
   updateSummary(resultText);
@@ -360,9 +457,11 @@ newCheckBtn.addEventListener("click", () => {
   setStatus(imageStatus, "Prêt pour un nouveau contrôle.", "ok");
   scanBtn.disabled = true;
   assessVisaBtn.disabled = true;
+
+  stopCamera();
 });
 
-// Vérifier mises à jour (simple : recharge visa_rules)
+// Vérifier mises à jour (recharge règles visa)
 checkUpdatesBtn.addEventListener("click", async () => {
   updateStatusEl.textContent = "Vérification des mises à jour...";
   await loadVisaRules();
@@ -370,7 +469,7 @@ checkUpdatesBtn.addEventListener("click", async () => {
   setTimeout(() => (updateStatusEl.textContent = ""), 3000);
 });
 
-// Réinitialisation partielle après changement d'image
+// Réinitialisation partielle après changement d'image/caméra
 function resetAfterImage() {
   currentMRZLines = null;
   currentDocumentData = null;
