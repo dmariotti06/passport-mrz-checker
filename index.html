@@ -9,11 +9,12 @@
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#0d47a1" />
 
-  <!-- Icône (tu mettras un vrai PNG dans assets/icons/) -->
+  <!-- Icône PWA -->
   <link rel="icon" href="assets/icons/icon-192.png" />
 
   <link rel="stylesheet" href="style.css" />
-  <!-- Tesseract.js pour l'OCR (CDN) -->
+
+  <!-- Tesseract.js pour l'OCR -->
   <script src="https://unpkg.com/tesseract.js@5.0.3/dist/tesseract.min.js"></script>
 </head>
 <body>
@@ -26,11 +27,25 @@
     <!-- Étape 1 : Acquisition image -->
     <section class="card">
       <h2>1. Image du document</h2>
-      <p>Importer une photo du passeport (zone MRZ visible).</p>
+      <p>Importer une photo du passeport (zone MRZ visible) ou utiliser la caméra de l’appareil.</p>
+
+      <!-- Import fichier -->
+      <label for="file-input" class="label-inline">Importer une image :</label>
       <input type="file" id="file-input" accept="image/*" />
+
+      <!-- Caméra -->
+      <div class="camera-controls">
+        <span>Ou utiliser la caméra :</span>
+        <button id="open-camera-btn">Ouvrir la caméra</button>
+        <button id="capture-btn" disabled>Prendre la photo</button>
+      </div>
+
+      <!-- Aperçu vidéo + canvas -->
       <div class="preview-container">
+        <video id="camera-video" autoplay playsinline></video>
         <canvas id="preview-canvas"></canvas>
       </div>
+
       <button id="scan-mrz-btn" disabled>Scanner la MRZ</button>
       <div id="image-status" class="status"></div>
     </section>
