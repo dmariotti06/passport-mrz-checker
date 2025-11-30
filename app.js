@@ -8,7 +8,7 @@ if ("serviceWorker" in navigator) {
   });
 }
 
-// --- Éléments DOM ---
+// --- Sélection des éléments DOM ---
 const fileInput = document.getElementById("file-input");
 const scanBtn = document.getElementById("scan-mrz-btn");
 const imageStatus = document.getElementById("image-status");
@@ -26,37 +26,75 @@ const checkUpdatesBtn = document.getElementById("check-updates-btn");
 const updateStatusEl = document.getElementById("update-status");
 const versionInfoEl = document.getElementById("version-info");
 
-// Nouveaux éléments pour la caméra
+// Caméra
 const openCameraBtn = document.getElementById("open-camera-btn");
 const captureBtn = document.getElementById("capture-btn");
 const cameraVideo = document.getElementById("camera-video");
 
+// Canvas d’aperçu
 const previewCanvas = document.getElementById("preview-canvas");
 const ctx = previewCanvas.getContext("2d");
 
+// Status light MRZ
+const mrzStatusLight = document.getElementById("mrz-status-light");
+
 // --- État en mémoire (non persistant) ---
-let currentImage = null;
+let currentImage = null;          // bool ou Image, juste pour dire qu’il y a une image dans le canvas
 let currentMRZLines = null;
 let currentDocumentData = null;
 let currentVisaRules = null;
 let currentVisaRulesVersion = null;
 let cameraStream = null;
 
-// --- Version app (à adapter) ---
-const APP_VERSION = "1.1.0";
+// --- Version app ---
+const APP_VERSION = "1.2.0";
 versionInfoEl.textContent = `Version appli : ${APP_VERSION}`;
+
+// Utilitaire statut texte
+function setStatus(el, message, level) {
+  el.textContent = message;
+  el.classList.remove("ok", "warn", "error");
+  if (level) el.classList.add(level);
+}
+
+// Status light MRZ
+function updateMrzStatusLight(doc) {
+  if (!mrzStatusLight) return;
+
+  mrzStatusLight.classList.remove(
+    "status-light--ok",
+    "status-light--error",
+    "status-light--unknown"
+  );
+
+  if (!doc) {
+    mrzStatusLight.classList.add("status-light--unknown");
+    return;
+  }
+
+  const allCheckDigitsOk =
+    doc.passportNumberValid &&
+    doc.birthDateValid &&
+    doc.expiryDateValid;
+
+  if (allCheckDigitsOk) {
+    mrzStatusLight.classList.add("status-light--ok");
+  } else {
+    mrzStatusLight.classList.add("status-light--error");
+  }
+}
 
 // --- Gestion image via fichier ---
 fileInput.addEventListener("change", (e) => {
   const file = e.target.files[0];
   resetAfterImage();
-  stopCamera(); // si la caméra était active
+  stopCamera(); // on coupe la caméra si elle tournait
 
   if (!file) return;
 
   if (!file.type.startsWith("image/")) {
     setStatus(imageStatus, "Veuillez sélectionner une image valide.", "error");
-    scanBtn.disabled = false;
+    scanBtn.disabled = true;
     return;
   }
 
@@ -92,7 +130,7 @@ fileInput.addEventListener("change", (e) => {
 // --- Gestion caméra : ouverture ---
 openCameraBtn.addEventListener("click", async () => {
   resetAfterImage();
-  fileInput.value = ""; // on ignore l'upload si la caméra est utilisée
+  fileInput.value = "";
 
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     setStatus(
@@ -114,7 +152,7 @@ openCameraBtn.addEventListener("click", async () => {
 
     setStatus(
       imageStatus,
-      "Caméra active. Cadrez le document et cliquez sur 'Prendre la photo'.",
+      "Caméra active. Cadrez le document puis cliquez sur 'Prendre la photo'.",
       "ok"
     );
     captureBtn.disabled = false;
@@ -129,7 +167,7 @@ openCameraBtn.addEventListener("click", async () => {
   }
 });
 
-// --- Gestion caméra : capture d'une image ---
+// --- Gestion caméra : capture ---
 captureBtn.addEventListener("click", () => {
   if (!cameraStream) {
     setStatus(imageStatus, "La caméra n'est pas active.", "error");
@@ -142,7 +180,7 @@ captureBtn.addEventListener("click", () => {
   if (!videoWidth || !videoHeight) {
     setStatus(
       imageStatus,
-      "Flux vidéo non prêt. Attendez une seconde et réessayez.",
+      "Flux vidéo non prêt. Attendez une seconde puis réessayez.",
       "warn"
     );
     return;
@@ -166,7 +204,7 @@ captureBtn.addEventListener("click", () => {
     previewCanvas.height
   );
 
-  currentImage = true; // flag indiquant qu'une image est disponible dans le canvas
+  currentImage = true;
   setStatus(
     imageStatus,
     "Photo capturée depuis la caméra. Prêt à scanner la MRZ.",
@@ -175,10 +213,10 @@ captureBtn.addEventListener("click", () => {
   scanBtn.disabled = false;
 });
 
-// --- Fonction utilitaire : arrêter la caméra ---
+// Couper la caméra
 function stopCamera() {
   if (cameraStream) {
-    cameraStream.getTracks().forEach((track) => track.stop());
+    cameraStream.getTracks().forEach((t) => t.stop());
     cameraStream = null;
   }
   cameraVideo.srcObject = null;
@@ -186,9 +224,10 @@ function stopCamera() {
   captureBtn.disabled = true;
 }
 
-// --- Scan MRZ via Tesseract.js ---
+// --- Scan MRZ ---
 scanBtn.addEventListener("click", async () => {
   if (!currentImage) return;
+
   setStatus(imageStatus, "Lecture MRZ en cours (OCR)...", "warn");
   scanBtn.disabled = true;
   mrzRawEl.textContent = "";
@@ -196,6 +235,7 @@ scanBtn.addEventListener("click", async () => {
   summaryEl.innerHTML = "";
   visaResultEl.textContent = "";
   nationalityInfoEl.textContent = "";
+  updateMrzStatusLight(null);
 
   try {
     const { data } = await Tesseract.recognize(previewCanvas, "eng", {
@@ -210,13 +250,16 @@ scanBtn.addEventListener("click", async () => {
     const mrzCandidates = lines.filter(
       (l) => l.includes("<") && l.length >= 40
     );
+
     if (mrzCandidates.length < 2) {
       setStatus(
         imageStatus,
-        "MRZ non détectée ou illisible. Vérifiez le cadrage et la qualité.",
+        "MRZ non détectée ou illisible. Vérifiez la qualité de l'image.",
         "error"
       );
       scanBtn.disabled = false;
+      currentDocumentData = null;
+      updateMrzStatusLight(null);
       return;
     }
 
@@ -228,10 +271,11 @@ scanBtn.addEventListener("click", async () => {
     currentDocumentData = parsed;
 
     displayDocumentData(parsed);
+    updateMrzStatusLight(parsed);
     setStatus(imageStatus, "MRZ lue et parsée.", "ok");
 
     if (parsed.nationality) {
-      nationalityInfoEl.textContent = `Nationalité MRZ : ${parsed.nationality} (code pays)`;
+      nationalityInfoEl.textContent = `Nationalité MRZ : ${parsed.nationality}`;
       assessVisaBtn.disabled = false;
     } else {
       nationalityInfoEl.textContent =
@@ -242,15 +286,17 @@ scanBtn.addEventListener("click", async () => {
     console.error(err);
     setStatus(
       imageStatus,
-      "Erreur lors de la lecture OCR. Réessayez avec une meilleure image.",
+      "Erreur OCR lors de la lecture de la MRZ.",
       "error"
     );
+    currentDocumentData = null;
+    updateMrzStatusLight(null);
   } finally {
     scanBtn.disabled = false;
   }
 });
 
-// --- Parsing MRZ TD3 (simplifié) ---
+// --- Parsing MRZ TD3 (passeport) ---
 function parseMRZPassportTD3(lines) {
   const [l1Raw, l2Raw] = lines.map((l) => l.padEnd(44, "<").slice(0, 44));
   const l1 = l1Raw;
@@ -295,9 +341,10 @@ function parseMRZPassportTD3(lines) {
   };
 }
 
-// Calcul check digit MRZ (ICAO) simplifié
+// Check digit ICAO
 function checkMRZDigit(data, checkDigitChar) {
   const weights = [7, 3, 1];
+
   const mapChar = (ch) => {
     if (ch >= "0" && ch <= "9") return ch.charCodeAt(0) - "0".charCodeAt(0);
     if (ch >= "A" && ch <= "Z") return ch.charCodeAt(0) - "A".charCodeAt(0) + 10;
@@ -326,20 +373,20 @@ function displayDocumentData(doc) {
     <div class="field"><strong>Type document :</strong> ${doc.documentType}</div>
     <div class="field"><strong>Pays émetteur :</strong> ${doc.issuingState}</div>
     <div class="field"><strong>Nationalité :</strong> ${doc.nationality}</div>
-    <div class="field"><strong>N° document :</strong> ${doc.passportNumber} 
+    <div class="field"><strong>N° document :</strong> ${doc.passportNumber}
       (${doc.passportNumberValid ? "check digit OK" : "check digit KO"})
     </div>
-    <div class="field"><strong>Date de naissance :</strong> ${birthDateText} 
+    <div class="field"><strong>Date de naissance :</strong> ${birthDateText}
       (${doc.birthDateValid ? "check digit OK" : "check digit KO"})
     </div>
-    <div class="field"><strong>Date d'expiration :</strong> ${expDateText} 
+    <div class="field"><strong>Date d'expiration :</strong> ${expDateText}
       (${doc.expiryDateValid ? "check digit OK" : "check digit KO"})
     </div>
   `;
   docDataEl.innerHTML = html;
 }
 
-// Conversion YYMMDD -> texte simple
+// Format date YYMMDD -> JJ/MM/AA
 function formatMRZDate(mrzDate) {
   if (!/^\d{6}$/.test(mrzDate)) return mrzDate;
   const yy = mrzDate.slice(0, 2);
@@ -348,14 +395,7 @@ function formatMRZDate(mrzDate) {
   return `${dd}/${mm}/${yy}`;
 }
 
-// Utilitaire affichage statut
-function setStatus(el, message, level) {
-  el.textContent = message;
-  el.classList.remove("ok", "warn", "error");
-  if (level) el.classList.add(level);
-}
-
-// --- Moteur visa : chargement des règles locales ---
+// --- Moteur visa : chargement des règles ---
 async function loadVisaRules() {
   try {
     const versionResp = await fetch("./rules/visa_rules_version.json", {
@@ -383,11 +423,12 @@ assessVisaBtn.addEventListener("click", () => {
   if (!currentDocumentData || !currentVisaRules) {
     setStatus(
       visaResultEl,
-      "Données MRZ ou règles visas indisponibles.",
+      "Données MRZ ou règles visa indisponibles.",
       "error"
     );
     return;
   }
+
   const stayType = stayTypeSelect.value;
   if (!stayType) {
     setStatus(visaResultEl, "Sélectionnez un type de séjour.", "warn");
@@ -400,7 +441,7 @@ assessVisaBtn.addEventListener("click", () => {
   if (!rulesEntry) {
     setStatus(
       visaResultEl,
-      `Nationalité ${nationality} non définie dans la table locale. Se référer aux instructions officielles.`,
+      `Nationalité ${nationality} non définie dans la table locale.`,
       "warn"
     );
     updateSummary("Règles visa non définies pour cette nationalité.");
@@ -413,7 +454,7 @@ assessVisaBtn.addEventListener("click", () => {
   if (stayType === "short") {
     resultText = rulesEntry.short_stay.text;
     level = rulesEntry.short_stay.level;
-  } else if (stayType === "long") {
+  } else {
     resultText = rulesEntry.long_stay.text;
     level = rulesEntry.long_stay.level;
   }
@@ -437,11 +478,11 @@ function updateSummary(visaText) {
     <div><strong>Nationalité :</strong> ${nat}</div>
     <div><strong>Expiration document :</strong> ${expiry}</div>
     <div><strong>Appréciation visa :</strong> ${visaText || "N/A"}</div>
-    <div class="hint">Règles utilisées : ${currentVisaRulesVersion}</div>
+    <div class="hint">Règles utilisées : ${currentVisaRulesVersion || "inconnue"}</div>
   `;
 }
 
-// Nouveau contrôle = purge des données en mémoire
+// Nouveau contrôle
 newCheckBtn.addEventListener("click", () => {
   fileInput.value = "";
   previewCanvas.width = 0;
@@ -457,11 +498,11 @@ newCheckBtn.addEventListener("click", () => {
   setStatus(imageStatus, "Prêt pour un nouveau contrôle.", "ok");
   scanBtn.disabled = true;
   assessVisaBtn.disabled = true;
-
+  updateMrzStatusLight(null);
   stopCamera();
 });
 
-// Vérifier mises à jour (recharge règles visa)
+// Vérifier mises à jour règles visa
 checkUpdatesBtn.addEventListener("click", async () => {
   updateStatusEl.textContent = "Vérification des mises à jour...";
   await loadVisaRules();
@@ -469,7 +510,7 @@ checkUpdatesBtn.addEventListener("click", async () => {
   setTimeout(() => (updateStatusEl.textContent = ""), 3000);
 });
 
-// Réinitialisation partielle après changement d'image/caméra
+// Reset partiel après nouvelle image/caméra
 function resetAfterImage() {
   currentMRZLines = null;
   currentDocumentData = null;
@@ -479,6 +520,7 @@ function resetAfterImage() {
   visaResultEl.textContent = "";
   summaryEl.innerHTML = "";
   assessVisaBtn.disabled = true;
+  updateMrzStatusLight(null);
 }
 
 // Chargement initial des règles
