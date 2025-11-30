@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <title>Contrôle MRZ & conditions de visa France</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- Manifest PWA -->
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#0d47a1" />
+
+  <!-- Icône (tu mettras un vrai PNG dans assets/icons/) -->
+  <link rel="icon" href="assets/icons/icon-192.png" />
+
+  <link rel="stylesheet" href="style.css" />
+  <!-- Tesseract.js pour l'OCR (CDN) -->
+  <script src="https://unpkg.com/tesseract.js@5.0.3/dist/tesseract.min.js"></script>
+</head>
+<body>
+  <header class="app-header">
+    <h1>Contrôle document & visa France</h1>
+    <div id="version-info"></div>
+  </header>
+
+  <main>
+    <!-- Étape 1 : Acquisition image -->
+    <section class="card">
+      <h2>1. Image du document</h2>
+      <p>Importer une photo du passeport (zone MRZ visible).</p>
+      <input type="file" id="file-input" accept="image/*" />
+      <div class="preview-container">
+        <canvas id="preview-canvas"></canvas>
+      </div>
+      <button id="scan-mrz-btn" disabled>Scanner la MRZ</button>
+      <div id="image-status" class="status"></div>
+    </section>
+
+    <!-- Étape 2 : Résultat MRZ -->
+    <section class="card">
+      <h2>2. Résultat MRZ & document</h2>
+      <pre id="mrz-raw"></pre>
+      <div id="doc-data"></div>
+    </section>
+
+    <!-- Étape 3 : Type de séjour & visa -->
+    <section class="card">
+      <h2>3. Évaluation des conditions de visa pour la France</h2>
+
+      <div id="nationality-info" class="field"></div>
+
+      <label for="stay-type">Type de séjour envisagé :</label>
+      <select id="stay-type">
+        <option value="">-- Sélectionner --</option>
+        <option value="short">Court séjour (≤ 90 jours / 180)</option>
+        <option value="long">Long séjour (> 90 jours)</option>
+      </select>
+
+      <label for="purpose">Motif (indicatif) :</label>
+      <select id="purpose">
+        <option value="">Non précisé</option>
+        <option value="tourism">Tourisme</option>
+        <option value="business">Affaires</option>
+        <option value="family">Famille</option>
+        <option value="study">Études</option>
+        <option value="other">Autre</option>
+      </select>
+
+      <button id="assess-visa-btn" disabled>Évaluer les conditions de visa</button>
+
+      <div id="visa-result" class="status"></div>
+      <div id="rules-version" class="hint"></div>
+    </section>
+
+    <!-- Résumé pour l'agent -->
+    <section class="card">
+      <h2>4. Résumé contrôle</h2>
+      <div id="summary"></div>
+      <p class="disclaimer">
+        Cet outil fournit une aide indicative basée sur les données MRZ et une table locale de règles de visa.
+        Il ne se substitue en aucun cas à une décision consulaire ni aux informations officielles
+        fournies par les autorités françaises (France-Visas, postes consulaires, etc.).
+      </p>
+    </section>
+  </main>
+
+  <footer>
+    <button id="new-check-btn">Nouveau contrôle</button>
+    <button id="check-updates-btn">Vérifier les mises à jour</button>
+    <span id="update-status" class="hint"></span>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
