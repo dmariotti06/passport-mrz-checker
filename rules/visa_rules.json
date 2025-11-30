@@ -1,0 +1,42 @@
+{
+  "FRA": {
+    "short_stay": {
+      "level": "ok",
+      "text": "Ressortissant français : question du visa Schengen sans objet pour l'entrée en France."
+    },
+    "long_stay": {
+      "level": "ok",
+      "text": "Ressortissant français : pas de visa long séjour requis pour résider en France."
+    }
+  },
+  "USA": {
+    "short_stay": {
+      "level": "ok",
+      "text": "Ressortissant des États-Unis : en principe exempté de visa Schengen pour un court séjour (≤ 90 jours sur 180), sous réserve des autres conditions d'entrée."
+    },
+    "long_stay": {
+      "level": "warn",
+      "text": "Ressortissant des États-Unis : un visa long séjour est en principe requis pour un séjour de plus de 90 jours en France."
+    }
+  },
+  "IND": {
+    "short_stay": {
+      "level": "warn",
+      "text": "Ressortissant indien : un visa Schengen est en principe requis pour un court séjour en France."
+    },
+    "long_stay": {
+      "level": "warn",
+      "text": "Ressortissant indien : un visa long séjour est en principe requis pour un séjour de plus de 90 jours en France."
+    }
+  },
+  "DEU": {
+    "short_stay": {
+      "level": "ok",
+      "text": "Ressortissant allemand (UE) : droit de circuler et de séjourner dans l'espace Schengen, sous réserve des règles de séjour applicables."
+    },
+    "long_stay": {
+      "level": "ok",
+      "text": "Ressortissant allemand (UE) : pas de visa long séjour requis pour résider en France, sous réserve des formalités de séjour applicables."
+    }
+  }
+}
