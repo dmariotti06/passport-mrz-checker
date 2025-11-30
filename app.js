@@ -31,7 +31,7 @@ const openCameraBtn = document.getElementById("open-camera-btn");
 const captureBtn = document.getElementById("capture-btn");
 const cameraVideo = document.getElementById("camera-video");
 
-// Canvas d’aperçu
+// Canvas d’aperçu principal
 const previewCanvas = document.getElementById("preview-canvas");
 const ctx = previewCanvas.getContext("2d");
 
@@ -39,7 +39,7 @@ const ctx = previewCanvas.getContext("2d");
 const mrzStatusLight = document.getElementById("mrz-status-light");
 
 // --- État en mémoire (non persistant) ---
-let currentImage = null;          // bool ou Image, juste pour dire qu’il y a une image dans le canvas
+let currentImage = null;          // bool ou Image pour signaler qu’une image est dans le canvas
 let currentMRZLines = null;
 let currentDocumentData = null;
 let currentVisaRules = null;
@@ -47,7 +47,7 @@ let currentVisaRulesVersion = null;
 let cameraStream = null;
 
 // --- Version app ---
-const APP_VERSION = "1.2.0";
+const APP_VERSION = "1.3.0";
 versionInfoEl.textContent = `Version appli : ${APP_VERSION}`;
 
 // Utilitaire statut texte
@@ -224,7 +224,7 @@ function stopCamera() {
   captureBtn.disabled = true;
 }
 
-// --- Scan MRZ ---
+// --- Scan MRZ (avec recadrage zone basse) ---
 scanBtn.addEventListener("click", async () => {
   if (!currentImage) return;
 
@@ -238,8 +238,30 @@ scanBtn.addEventListener("click", async () => {
   updateMrzStatusLight(null);
 
   try {
-    const { data } = await Tesseract.recognize(previewCanvas, "eng", {
-      tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<"
+    // 1) On recadre la zone MRZ (bas du canvas)
+    const mrzCanvas = document.createElement("canvas");
+    const mrzCtx = mrzCanvas.getContext("2d");
+
+    const cropHeight = Math.floor(previewCanvas.height * 0.25); // 25 % du bas
+    mrzCanvas.width = previewCanvas.width;
+    mrzCanvas.height = cropHeight;
+
+    mrzCtx.drawImage(
+      previewCanvas,
+      0,
+      previewCanvas.height - cropHeight,
+      previewCanvas.width,
+      cropHeight,
+      0,
+      0,
+      previewCanvas.width,
+      cropHeight
+    );
+
+    // 2) OCR uniquement sur cette zone recadrée
+    const { data } = await Tesseract.recognize(mrzCanvas, "eng", {
+      tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<",
+      tessedit_pageseg_mode: 6 // bloc de texte uniforme
     });
 
     const lines = data.text
