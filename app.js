@@ -47,7 +47,7 @@ let currentVisaRulesVersion = null;
 let cameraStream = null;
 
 // --- Version app ---
-const APP_VERSION = "1.3.0";
+const APP_VERSION = "1.4.0";
 versionInfoEl.textContent = `Version appli : ${APP_VERSION}`;
 
 // Utilitaire statut texte
@@ -224,7 +224,7 @@ function stopCamera() {
   captureBtn.disabled = true;
 }
 
-// --- Scan MRZ (avec recadrage zone basse) ---
+// --- Scan MRZ (recadrage bas + prétraitement + OCR) ---
 scanBtn.addEventListener("click", async () => {
   if (!currentImage) return;
 
@@ -238,7 +238,7 @@ scanBtn.addEventListener("click", async () => {
   updateMrzStatusLight(null);
 
   try {
-    // 1) On recadre la zone MRZ (bas du canvas)
+    // 1) Recadrage de la zone MRZ (bas du canvas)
     const mrzCanvas = document.createElement("canvas");
     const mrzCtx = mrzCanvas.getContext("2d");
 
@@ -258,19 +258,46 @@ scanBtn.addEventListener("click", async () => {
       cropHeight
     );
 
-    // 2) OCR uniquement sur cette zone recadrée
-    const { data } = await Tesseract.recognize(mrzCanvas, "eng", {
+    // 2) Prétraitement : niveaux de gris + Otsu + binarisation
+    const imgData = mrzCtx.getImageData(0, 0, mrzCanvas.width, mrzCanvas.height);
+    const data = imgData.data;
+
+    // gris
+    for (let i = 0; i < data.length; i += 4) {
+      const g = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+      data[i] = data[i + 1] = data[i + 2] = g;
+    }
+
+    // histogramme
+    const hist = new Array(256).fill(0);
+    for (let i = 0; i < data.length; i += 4) {
+      hist[data[i]]++;
+    }
+
+    // seuil Otsu
+    const threshold = otsuThreshold(hist, mrzCanvas.width * mrzCanvas.height);
+
+    // binarisation
+    for (let i = 0; i < data.length; i += 4) {
+      const v = data[i] < threshold ? 0 : 255;
+      data[i] = data[i + 1] = data[i + 2] = v;
+    }
+
+    mrzCtx.putImageData(imgData, 0, 0);
+
+    // 3) OCR sur la zone MRZ prétraitée
+    const { data: ocrData } = await Tesseract.recognize(mrzCanvas, "eng", {
       tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<",
-      tessedit_pageseg_mode: 6 // bloc de texte uniforme
+      tessedit_pageseg_mode: 6
     });
 
-    const lines = data.text
+    const lines = ocrData.text
       .split("\n")
       .map((l) => l.trim())
       .filter((l) => l.length > 0);
 
-    const mrzCandidates = lines.filter(
-      (l) => l.includes("<") && l.length >= 40
+    let mrzCandidates = lines.filter(
+      (l) => l.includes("<") && l.length >= 30 // un peu plus permissif
     );
 
     if (mrzCandidates.length < 2) {
@@ -285,8 +312,10 @@ scanBtn.addEventListener("click", async () => {
       return;
     }
 
-    const mrzLines = mrzCandidates.slice(-2);
+    let mrzLines = mrzCandidates.slice(-2).map(normalizeMRZ);
+    mrzLines = mrzLines.map((l) => l.padEnd(44, "<").slice(0, 44));
     currentMRZLines = mrzLines;
+
     mrzRawEl.textContent = mrzLines.join("\n");
 
     const parsed = parseMRZPassportTD3(mrzLines);
@@ -298,6 +327,7 @@ scanBtn.addEventListener("click", async () => {
 
     if (parsed.nationality) {
       nationalityInfoEl.textContent = `Nationalité MRZ : ${parsed.nationality}`;
+      assessVisaBtn.disabled = true; // toujours à toi de décider si tu actives ici
       assessVisaBtn.disabled = false;
     } else {
       nationalityInfoEl.textContent =
@@ -318,6 +348,48 @@ scanBtn.addEventListener("click", async () => {
   }
 });
 
+// --- Otsu threshold helper ---
+function otsuThreshold(hist, totalPixels) {
+  let sum = 0;
+  for (let i = 0; i < 256; i++) sum += i * hist[i];
+
+  let sumB = 0;
+  let wB = 0;
+  let wF = 0;
+  let varMax = 0;
+  let threshold = 0;
+
+  for (let i = 0; i < 256; i++) {
+    wB += hist[i];
+    if (wB === 0) continue;
+    wF = totalPixels - wB;
+    if (wF === 0) break;
+
+    sumB += i * hist[i];
+    const mB = sumB / wB;
+    const mF = (sum - sumB) / wF;
+    const varBetween = wB * wF * (mB - mF) * (mB - mF);
+
+    if (varBetween > varMax) {
+      varMax = varBetween;
+      threshold = i;
+    }
+  }
+  return threshold;
+}
+
+// --- Normalisation MRZ globale (corrige O/0, I/1, etc.) ---
+function normalizeMRZ(text) {
+  return text
+    .replace(/O/g, "0")
+    .replace(/Q/g, "0")
+    .replace(/I/g, "1")
+    .replace(/L/g, "L") // on laisse L mais on supprime les caractères non MRZ
+    .replace(/B/g, "8")
+    .replace(/S/g, "5")
+    .replace(/[^A-Z0-9<]/g, "<");
+}
+
 // --- Parsing MRZ TD3 (passeport) ---
 function parseMRZPassportTD3(lines) {
   const [l1Raw, l2Raw] = lines.map((l) => l.padEnd(44, "<").slice(0, 44));
@@ -331,18 +403,33 @@ function parseMRZPassportTD3(lines) {
   const primaryIdentifier = nameParts[0] || "";
   const secondaryIdentifier = nameParts[1] || "";
 
-  const passportNumber = l2.slice(0, 9).replace(/</g, "");
+  const rawPassNum = l2.slice(0, 9);
+  const passportNumber = normalizePassportNumber(rawPassNum).replace(/</g, "");
   const passportNumberCheckDigit = l2.slice(9, 10);
+
   const nationality = l2.slice(10, 13);
-  const birthDate = l2.slice(13, 19);
-  const birthDateCheckDigit = l2.slice(19, 20);
+
+  const rawBirth = l2.slice(13, 19);
+  const rawBirthCheck = l2.slice(19, 20);
+
+  const rawExpiry = l2.slice(21, 27);
+  const rawExpiryCheck = l2.slice(27, 28);
+
+  const birthDate = onlyDigits(rawBirth);
+  const expiryDate = onlyDigits(rawExpiry);
+
+  const birthDateCheckDigit = rawBirthCheck;
+  const expiryDateCheckDigit = rawExpiryCheck;
+
   const sex = l2.slice(20, 21);
-  const expiryDate = l2.slice(21, 27);
-  const expiryDateCheckDigit = l2.slice(27, 28);
 
   const passportNumberValid = checkMRZDigit(l2.slice(0, 9), passportNumberCheckDigit);
-  const birthDateValid = checkMRZDigit(l2.slice(13, 19), birthDateCheckDigit);
-  const expiryDateValid = checkMRZDigit(l2.slice(21, 27), expiryDateCheckDigit);
+  const birthDateValid = /^\d{6}$/.test(birthDate)
+    ? checkMRZDigit(rawBirth, birthDateCheckDigit)
+    : false;
+  const expiryDateValid = /^\d{6}$/.test(expiryDate)
+    ? checkMRZDigit(rawExpiry, expiryDateCheckDigit)
+    : false;
 
   return {
     raw: { l1, l2 },
@@ -361,6 +448,21 @@ function parseMRZPassportTD3(lines) {
     expiryDate,
     expiryDateValid
   };
+}
+
+// Normalise le numéro de passeport (corrige les confusions O/0, I/1, etc.)
+function normalizePassportNumber(str) {
+  return str
+    .replace(/O/g, "0")
+    .replace(/Q/g, "0")
+    .replace(/I/g, "1")
+    .replace(/B/g, "8")
+    .replace(/S/g, "5");
+}
+
+// Garde uniquement des chiffres (pour dates YYMMDD)
+function onlyDigits(str) {
+  return str.replace(/[^0-9]/g, "0");
 }
 
 // Check digit ICAO
@@ -408,7 +510,7 @@ function displayDocumentData(doc) {
   docDataEl.innerHTML = html;
 }
 
-// Format date YYMMDD -> JJ/MM/AA
+// Format date YYMMDD -> JJ/MM/AA (approx.)
 function formatMRZDate(mrzDate) {
   if (!/^\d{6}$/.test(mrzDate)) return mrzDate;
   const yy = mrzDate.slice(0, 2);
